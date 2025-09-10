@@ -1,0 +1,256 @@
+{% load static %}
+{% load filter %}
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>Hasil Rekomendasi Jurusan</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 40px;
+        }
+        .container {
+            max-width: 900px;
+        }
+        .card {
+            margin-bottom: 20px;
+            border-radius: 1rem;
+        }
+        .card-header {
+            background-color: #0d6efd;
+            color: white;
+            font-weight: bold;
+        }
+        .table td, .table th {
+            vertical-align: middle;
+        }
+        .info-btn {
+            margin-top: 5px;
+        }
+        .tren-label {
+            font-weight: bold;
+        }
+        .chart-container {
+            margin-top: 20px;
+        }
+        .title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #0d6efd, #6610f2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+            margin-bottom: 40px;
+            animation: fadeInDown 0.7s ease-out;
+        }
+
+        @keyframes fadeInDown {
+            0% {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2 class="title">Hasil Rekomendasi Jurusan Siswa</h2>
+    <div class="text-center">
+    <a href="{% url 'prediksi:download_excel' %}" class="btn btn-success mb-3">Download Hasil Excel</a>
+    </div>
+
+
+    {% for hasil in hasil_rekomendasi %}
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">
+                Siswa {{ hasil.siswa_ke }}
+            </div>
+            <div class="card-body">
+                <!-- Tabel rekomendasi jurusan -->
+                <table class="table table-bordered table-striped mb-3">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Ranking</th>
+                            <th>Jurusan & Info</th>
+                            <th>Probabilitas</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in hasil.top_5 %}
+                        {% with jurusan_info=info_jurusan|get_item:item.jurusan %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td>
+                                <strong>{{ item.jurusan }}</strong><br>
+                                <button class="btn btn-success btn-sm info-btn" type="button"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#info-{{ hasil.siswa_ke }}-{{ forloop.counter }}"
+                                        aria-expanded="false"
+                                        aria-controls="info-{{ hasil.siswa_ke }}-{{ forloop.counter }}">
+                                    Informasi Jurusan
+                                </button>
+                                <div class="collapse mt-2" id="info-{{ hasil.siswa_ke }}-{{ forloop.counter }}">
+                                    <small><em>{{ jurusan_info.pengertian }}</em></small><br>
+                                    <small><strong>Mata Kuliah:</strong> {{ jurusan_info.mata_kuliah|join:", " }}</small><br>
+                                    <small><strong>Prospek:</strong> {{ jurusan_info.prospek }}</small>
+                                </div>
+                            </td>
+                            <td>{{ item.probabilitas|floatformat:4 }}</td>
+                        </tr>
+                        {% endwith %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <!-- Dropdown pilih mapel -->
+                <label for="select-mapel-{{ hasil.siswa_ke }}" class="form-label mt-3"><strong>Grafik Nilai Mata Pelajaran:</strong></label>
+                <select id="select-mapel-{{ hasil.siswa_ke }}" class="form-select mapel-select" data-siswa="{{ hasil.siswa_ke }}">
+                    <option value="">-- Pilih Mapel --</option>
+                    {% for mapel, nilai_list in hasil.nilai_semester_dict.items %}
+                        <option value="{{ mapel }}">{{ mapel }}</option>
+                    {% endfor %}
+                </select>
+
+                <!-- Grafik Tren Nilai -->
+                <div id="chart-container-{{ hasil.siswa_ke }}" class="chart-container"
+                     style="visibility: hidden; height: 0; overflow: hidden;">
+                    <canvas id="chart-siswa-{{ hasil.siswa_ke }}" height="100"></canvas>
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    const dataNilaiSiswa = {
+        {% for hasil in hasil_rekomendasi %}
+            "{{ hasil.siswa_ke }}": {{ hasil.nilai_semester|safe }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    const semesterLabels = ['S1', 'S2', 'S3', 'S4', 'S5'];
+    const mapelColors = {
+        nilai_mtk_umum: '#dc3545',
+        nilai_biologi: '#198754',
+        nilai_kimia: '#0dcaf0'
+    };
+    const fallbackColors = [
+        '#6610f2', '#6f42c1', '#d63384', '#fd7e14',
+        '#ffc107', '#20c997', '#6c757d', '#343a40'
+    ];
+
+    const charts = {};
+
+    function buatChart(siswaKe, datasets) {
+        const ctx = document.getElementById(`chart-siswa-${siswaKe}`).getContext('2d');
+        if (charts[siswaKe]) charts[siswaKe].destroy();
+
+        charts[siswaKe] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: semesterLabels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom' },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                scales: {
+                    y: {
+                        min: 50,
+                        max: 100,
+                        ticks: { stepSize: 10 },
+                        title: { display: true, text: 'Nilai' }
+                    },
+                    x: {
+                        title: { display: true, text: 'Semester' }
+                    }
+                }
+            }
+        });
+    }
+
+    function tampilkanGrafikDefault(siswaKe) {
+        const data = dataNilaiSiswa[siswaKe];
+        const defaultMapel = ['nilai_mtk_umum', 'nilai_biologi', 'nilai_kimia'];
+        const datasets = [];
+        let colorIndex = 0;
+
+        defaultMapel.forEach(mapel => {
+            if (data[mapel]) {
+                datasets.push({
+                    label: mapel,
+                    data: data[mapel],
+                    borderColor: mapelColors[mapel] || fallbackColors[colorIndex],
+                    backgroundColor: mapelColors[mapel] || fallbackColors[colorIndex],
+                    fill: false,
+                    tension: 0.3
+                });
+                colorIndex++;
+            }
+        });
+
+        const container = document.getElementById(`chart-container-${siswaKe}`);
+        if (datasets.length > 0) {
+            container.style.visibility = 'visible';
+            container.style.height = 'auto';
+            container.style.overflow = 'visible';
+            buatChart(siswaKe, datasets);
+        }
+    }
+
+    window.onload = function () {
+        for (const siswaKe in dataNilaiSiswa) {
+            tampilkanGrafikDefault(siswaKe);
+        }
+
+        document.querySelectorAll('.mapel-select').forEach(selectEl => {
+            selectEl.addEventListener('change', function () {
+                const siswaKe = this.dataset.siswa;
+                const mapel = this.value;
+                const container = document.getElementById(`chart-container-${siswaKe}`);
+
+                if (!mapel) {
+                    tampilkanGrafikDefault(siswaKe);
+                } else if (dataNilaiSiswa[siswaKe] && dataNilaiSiswa[siswaKe][mapel]) {
+                    const dataset = [{
+                        label: mapel,
+                        data: dataNilaiSiswa[siswaKe][mapel],
+                        borderColor: mapelColors[mapel] || fallbackColors[0],
+                        backgroundColor: mapelColors[mapel] || fallbackColors[0],
+                        fill: false,
+                        tension: 0.3
+                    }];
+
+                    container.style.visibility = 'visible';
+                    container.style.height = 'auto';
+                    container.style.overflow = 'visible';
+                    buatChart(siswaKe, dataset);
+                } else {
+                    container.style.visibility = 'hidden';
+                    container.style.height = '0';
+                    container.style.overflow = 'hidden';
+                    if (charts[siswaKe]) {
+                        charts[siswaKe].destroy();
+                        delete charts[siswaKe];
+                    }
+                }
+            });
+        });
+    }
+</script>
+
+</body>
+</html>
